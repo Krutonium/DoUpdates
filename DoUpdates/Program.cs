@@ -98,8 +98,8 @@ namespace DoUpdates
                    
                 }
             }
-            //Update Flake
-            if (config.updateFlake)
+            //Update Flake if older than 12 hours
+            if (config.updateFlake && File.GetLastWriteTime(FlakePath) < DateTime.Now.AddHours(-12))
             {
                 Console.WriteLine("Updating flake...");
                 var update = new Process();
@@ -152,7 +152,7 @@ namespace DoUpdates
                 
                 var copy = new Process();
                 copy.StartInfo.FileName = "nix";
-                copy.StartInfo.Arguments = $"copy --to {ip} .#nixosConfigurations.{name}.config.system.build.toplevel";
+                copy.StartInfo.Arguments = $"copy --to ssh://{ip} .#nixosConfigurations.{name}.config.system.build.toplevel";
                 copy.StartInfo.WorkingDirectory = localPath;
                 copy.StartInfo.UseShellExecute = false;
                 copy.Start();
@@ -173,13 +173,12 @@ namespace DoUpdates
                 ssh.StartInfo.FileName = "ssh";
                 if(config.Remotes.Find(x => x.Name == name).SwitchOrBoot == "switch")
                 {
-                    ssh.StartInfo.Arguments = $"root@{ip} nswitch";
+                    ssh.StartInfo.Arguments = $"{config.Username}@{ip} nixos-rebuild switch --flake {localPath}/.#{name}";
                 }
                 else
                 {
-                    ssh.StartInfo.Arguments = $"root@{ip} nboot";
+                    ssh.StartInfo.Arguments = $"{config.Username}@{ip} nixos-rebuild boot --flake {localPath}/.#{name}";
                 }
-                ssh.StartInfo.Arguments = $"root@{ip} ";
                 ssh.StartInfo.UseShellExecute = false;
                 ssh.Start();
                 ssh.WaitForExit();
@@ -201,6 +200,7 @@ namespace DoUpdates
         //Settings for each remote machine; Name as it is seen in the flake + IP
         public List<Remote> Remotes { get; set; }
         public bool updateFlake { get; set; }
+        public string Username { get; set; }
     }
     internal class Remote
     {
