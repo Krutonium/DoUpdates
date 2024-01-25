@@ -123,7 +123,7 @@ namespace DoUpdates
                 if (!OnlineHosts.ContainsKey(name))
                 {
                     //Device isn't online or available
-                    LogOutput("Skipping {name} as it is not available.", LogType.Error);
+                    LogOutput($"Skipping {name} as it is not available.", LogType.Error);
                     continue;
                 }
 
