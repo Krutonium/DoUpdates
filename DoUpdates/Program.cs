@@ -16,16 +16,16 @@ namespace DoUpdates
             //Read the config file after checking that it exists
             if (!File.Exists(configPath))
             {
-                Console.WriteLine("Didn't find deploy.json in your ~/NixOS/ directory. Please edit the new one.");
+                LogOutput("Didn't find deploy.json in your ~/NixOS/ directory. Please edit the new one.", LogType.Error);
                 Config c = new Config();
                 c.Remotes = new List<Remote>();
                 c.Remotes.Add(new Remote()
                 {
                     Name = "remotehost",
-                    IP = "10.1",
+                    Ip = "10.1",
                     SwitchOrBoot = "switch"
                 });
-                c.updateFlake = true;
+                c.UpdateFlake = true;
                 File.WriteAllText(configPath, JsonConvert.SerializeObject(c, Formatting.Indented));
                 Environment.Exit(1);
             }
@@ -36,13 +36,13 @@ namespace DoUpdates
             //Kill the process after 2 seconds
             foreach (var remote in config.Remotes)
             {
-                if (remote.Deploy == false || remote.IP == "null")
+                if (remote.Deploy == false || remote.Ip == "null")
                 {
                     continue;
                 }
                 var ping = new Process();
                 ping.StartInfo.FileName = "nix";
-                ping.StartInfo.Arguments = $"store ping --store ssh://{remote.IP}";
+                ping.StartInfo.Arguments = $"store ping --store ssh://{remote.Ip}";
                 ping.StartInfo.UseShellExecute = false;
                 ping.StartInfo.RedirectStandardOutput = true;
                 ping.StartInfo.RedirectStandardError = true;
@@ -50,20 +50,17 @@ namespace DoUpdates
                 ping.WaitForExit(2000);
                 if (ping.ExitCode != 0)
                 {
-                    Console.WriteLine($"Failed to ping {remote.IP}.");
-                    Console.WriteLine(ping.StandardError.ReadToEnd());
-                    Environment.Exit(1);
+                    LogOutput($"Failed to ping {remote.Ip}.", LogType.Warning);
+                    LogOutput(ping.StandardError.ReadToEnd(), LogType.Warning);
                 }
-                Console.WriteLine($"Successfully pinged {remote.IP}.");
+                LogOutput($"Successfully pinged {remote.Ip}.", LogType.Info);
                 //Add it to the list of hosts that are online
-                OnlineHosts.Add(remote.Name, remote.IP);
+                OnlineHosts.Add(remote.Name, remote.Ip);
             }
             
-
-
             if (!File.Exists(FlakePath))
             {
-                Console.WriteLine("Didn't find flake.nix in your ~/NixOS/ directory. Please run this from a NixOS machine.");
+                LogOutput("Didn't find flake.nix in your ~/NixOS/ directory. Please run this from a NixOS machine.", LogType.Error);
                 Environment.Exit(1);
             }
             var flake = File.ReadAllLines(FlakePath);
@@ -81,27 +78,27 @@ namespace DoUpdates
             {
                 if (OnlineHosts.ContainsKey(name))
                 {
-                    Console.WriteLine($"Online:  {name}");
+                    LogOutput($"Online:  {name}", LogType.Info);
                 }
                 else
                 {
                     //Check if the device is listed in the config
                     if (config.Remotes.Find(x => x.Name == name) != null)
                     {
-                        Console.WriteLine($"Offline: {name}");
+                        LogOutput($"Offline: {name}", LogType.Info);
                         continue;
                     }
                     else
                     {
-                        Console.WriteLine($"Not Listed in Config: {name}");
+                        LogOutput($"Not Listed in Config: {name}", LogType.Info);
                     }
                    
                 }
             }
             //Update Flake if older than 12 hours
-            if (config.updateFlake && File.GetLastWriteTime(FlakePath) < DateTime.Now.AddHours(-12))
+            if (config.UpdateFlake && File.GetLastWriteTime(FlakePath) < DateTime.Now.AddHours(-12))
             {
-                Console.WriteLine("Updating flake...");
+                LogOutput("Updating flake...", LogType.Info);
                 var update = new Process();
                 update.StartInfo.FileName = "nupdate";
                 update.StartInfo.WorkingDirectory = localPath;
@@ -110,8 +107,8 @@ namespace DoUpdates
                 update.WaitForExit();
                 if (update.ExitCode != 0)
                 {
-                    Console.WriteLine("Failed to update flake.");
-                    Console.WriteLine(update.StandardError.ReadToEnd());
+                    LogOutput("Failed to update flake.", LogType.Error);
+                    LogOutput(update.StandardError.ReadToEnd(), LogType.Error);
                     Environment.Exit(1);
                 }
                 Console.WriteLine("Successfully updated flake.");
@@ -119,94 +116,88 @@ namespace DoUpdates
             
             
             //Build each one to a folder with a name based on the config name, but only if it's online
-            //nix build -L .#nixosConfigurations.remotehost.config.system.build.toplevel
+            //nixos-rebuild switch --flake .#uGamingPC --target-host root@ip
+
             foreach (var name in configNames)
             {
                 if (!OnlineHosts.ContainsKey(name))
                 {
-                    Console.WriteLine($"Skipping {name} because it's offline or not configured.");
+                    //Device isn't online or available
+                    LogOutput("Skipping {name} as it is not available.", LogType.Error);
                     continue;
                 }
-                // Get the IP from the config
-                string ip = config.Remotes.Find(x => x.Name == name).IP;
-                
-                Console.WriteLine($"Building {name}...");
-                var build = new Process();
-                build.StartInfo.FileName = "nix";
-                build.StartInfo.WorkingDirectory = localPath;
-                build.StartInfo.Arguments = $"build -L .#nixosConfigurations.{name}.config.system.build.toplevel -o {name}";
-                build.StartInfo.UseShellExecute = false;
-                build.Start();
-                build.WaitForExit();
-                if (build.ExitCode != 0)
-                {
-                    Console.WriteLine($"Failed to build {name}.");
-                    Console.WriteLine(build.StandardError.ReadToEnd());
-                    Environment.Exit(1);
-                }
-                Console.WriteLine($"Successfully built {name}.");
-                //At this point, we have a folder with the name of the config
-                //We need to copy it to the remote machine
-                
-                //nix copy --to root@remotehost ./result
-                
-                var copy = new Process();
-                copy.StartInfo.FileName = "nix";
-                copy.StartInfo.Arguments = $"copy --to ssh://{ip} .#nixosConfigurations.{name}.config.system.build.toplevel";
-                copy.StartInfo.WorkingDirectory = localPath;
-                copy.StartInfo.UseShellExecute = false;
-                copy.Start();
-                
-                copy.WaitForExit();
-                if (copy.ExitCode != 0)
-                {
-                    Console.WriteLine($"Failed to copy {name}.");
-                    Console.WriteLine(copy.StandardError.ReadToEnd());
-                    Environment.Exit(1);
-                }
-                Console.WriteLine($"Successfully copied {name}.");
-                //Remove local build
-                File.Delete($"./{name}");
-                //ssh into the remote machine as root and run `nswitch or nboot`
-                
-                var ssh = new Process();
-                ssh.StartInfo.FileName = "ssh";
-                if(config.Remotes.Find(x => x.Name == name).SwitchOrBoot == "switch")
-                {
-                    ssh.StartInfo.Arguments = $"{config.Username}@{ip} nixos-rebuild switch --flake {localPath}/.#{name}";
-                }
-                else
-                {
-                    ssh.StartInfo.Arguments = $"{config.Username}@{ip} nixos-rebuild boot --flake {localPath}/.#{name}";
-                }
-                ssh.StartInfo.UseShellExecute = false;
-                ssh.Start();
-                ssh.WaitForExit();
-                if (ssh.ExitCode != 0)
-                {
-                    Console.WriteLine($"Failed to switch to {name}.");
-                    Console.WriteLine(ssh.StandardError.ReadToEnd());
-                    Environment.Exit(1);
-                }
-                Console.WriteLine($"Successfully switched on {name}. Deploy Complete");
-            }
 
-            Console.WriteLine("Deploy Complete");
+                Remote device = config.Remotes.Find(x => x.Name == name);
+                LogOutput($"Building {device.Name}", LogType.Info);
+                Console.Title = $"Building {device.Name}";
+                var builder = new ProcessStartInfo();
+                builder.FileName = "nixos-rebuild";
+                builder.WorkingDirectory = localPath;
+                builder.Arguments = $"{device.SwitchOrBoot} --flake {localPath}#{device.Name} --target-host {config.Username}@{device.Ip}";
+                builder.UseShellExecute = false;
+                Process buildRunner = new Process();
+                buildRunner.StartInfo = builder;
+                buildRunner.Start();
+                buildRunner.WaitForExit();
+                if (buildRunner.ExitCode != 0)
+                {
+                    LogOutput($"Build or Deploy Failure on {device.Name}", LogType.Error);
+                }
+            }   
+            LogOutput("Deploy Complete", LogType.Info);
+        }
+
+        public static void LogOutput(string Output, LogType logType)
+        {
+            string toWrite = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DoUpdates.log");
+            switch (logType)
+            {
+                case LogType.Error:
+                {
+                    string toLog = $"{DateTime.Now} |  ERROR  | {Output}";
+                    Console.WriteLine(toLog, ConsoleColor.Red);
+                    File.AppendAllText(toWrite, toLog + Environment.NewLine);
+                    break;
+                }
+                case LogType.Warning:
+                {
+                    string toLog = $"{DateTime.Now} | WARNING | {Output}";
+                    Console.WriteLine(toLog, ConsoleColor.Magenta);
+                    File.AppendAllText(toWrite, toLog + Environment.NewLine);
+                    break;
+                }
+                case LogType.Info:
+                {
+                    string toLog = $"{DateTime.Now} |  INFO   | {Output}";
+                    Console.WriteLine(toLog, ConsoleColor.Gray);
+                    File.AppendAllText(toWrite, toLog + Environment.NewLine);
+                    break;
+                }
+            }
+            Console.ResetColor();
+        }
+
+        public enum LogType
+        {
+            Info,
+            Warning,
+            Error
         }
     }
 
     internal class Config
     {
         //Settings for each remote machine; Name as it is seen in the flake + IP
-        public List<Remote> Remotes { get; set; }
-        public bool updateFlake { get; set; }
-        public string Username { get; set; }
+        public List<Remote> Remotes { get; set; } = new List<Remote>();
+        public bool UpdateFlake { get; set; } = true;
+        public string Username { get; set; } = "root";
     }
+
     internal class Remote
     {
-        public string Name { get; set; }
-        public string IP { get; set; }
-        public string SwitchOrBoot { get; set; }
+        public string Name { get; set; } = "Default";
+        public string Ip { get; set; } = "255.255.255.255";
+        public string SwitchOrBoot { get; set; } = "switch";
         public bool Deploy { get; set; } = false;
     }
 }
