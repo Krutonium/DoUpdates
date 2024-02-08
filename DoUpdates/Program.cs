@@ -48,6 +48,10 @@ namespace DoUpdates
                 ping.StartInfo.RedirectStandardError = true;
                 ping.Start();
                 ping.WaitForExit(2000);
+                if (ping.HasExited != true)
+                {
+                    ping.Kill();
+                }
                 if (ping.ExitCode != 0)
                 {
                     LogOutput($"Failed to ping {remote.Ip}.", LogType.Warning);
